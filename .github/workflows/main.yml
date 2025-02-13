@@ -1,0 +1,70 @@
+name: CI/CD Pipeline for Node.js
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: self-hosted
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: '16'
+
+    - name: Install dependencies
+      working-directory: ./sample-nodejs
+      run: npm install
+
+    - name: Run tests
+      working-directory: ./sample-nodejs
+      run: npm test
+
+    - name: Build Docker image
+      working-directory: ./sample-nodejs
+      run: docker build -t sample-nodejs:latest .
+
+    - name: Tag and Push Docker Image to ACR
+      run: |
+        docker tag sample-nodejs:latest ${{ secrets.ACR_NAME }}.azurecr.io/sample-nodejs:latest
+        echo "Logging in to Azure Container Registry..."
+        echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_NAME }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
+        docker push ${{ secrets.ACR_NAME }}.azurecr.io/sample-nodejs:latest
+
+  deploy:
+    runs-on: self-hosted
+    needs: build
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
+
+    - name: Install Azure CLI
+      run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+
+    - name: Log in to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Get AKS credentials
+      run: az aks get-credentials --resource-group RGroup --name RGroup-aks
+
+    - name: Install Helm
+      run: curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+    - name: Deploy Node.js app using Helm
+      run: helm upgrade --install sample-nodejs ./helm-charts/sample-nodejs --set image.repository=${{ secrets.ACR_NAME }}.azurecr.io/sample-nodejs --set image.tag=latest
