@@ -1,20 +1,21 @@
-name: Node.js Application CI/CD
+name: Docker Build and Push to ACR
 
 on:
   push:
     branches:
-      - main
-  pull_request:
-    branches:
-      - main
+      - main  # Trigger on the main branch
+
+permissions:
+  contents: read
 
 jobs:
-  build-and-test:
+  build-and-push:
     runs-on: ubuntu-latest
+
     steps:
-      # Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
 
       # Set up Node.js
       - name: Set up Node.js
@@ -31,68 +32,57 @@ jobs:
         run: |
           npm test
 
-  dockerize-and-push:
-    runs-on: ubuntu-latest
-    needs: build-and-test
-    steps:
-      # Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      # Build and tag Docker image
-      - name: Build Docker image for Node.js
+      - name: Docker Login to ACR
         run: |
-          docker build -t sample-nodejs:latest .
+          echo "${{ secrets.ACR_PASSWORD }}" | docker login ${{ secrets.ACR_NAME }}.azurecr.io -u ${{ secrets.ACR_USERNAME }} --password-stdin
 
-      - name: Tag Docker image to ACR
+      - name: Build and Tag Docker Image
         run: |
-          docker tag sample-nodejs:latest ${{ secrets.ACR_NAME }}.azurecr.io/sample-nodejs:latest
+          IMAGE_NAME=${{ secrets.ACR_NAME }}.azurecr.io/myapp
+          docker build -t $IMAGE_NAME:${{ github.sha }} .
+          docker tag $IMAGE_NAME:${{ github.sha }} $IMAGE_NAME:latest
 
-      # Log in to Azure Container Registry (ACR)
-      - name: Log in to Azure Container Registry
-        uses: azure/docker-login@v1
-        with:
-          login-server: ${{ secrets.ACR_NAME }}.azurecr.io
-          username: ${{ secrets.ACR_USERNAME }}
-          password: ${{ secrets.ACR_PASSWORD }}
-
-      # Push Docker image to ACR
-      - name: Push Docker image for Node.js to ACR
+      - name: Push Docker Image to ACR
         run: |
-          docker push ${{ secrets.ACR_NAME }}.azurecr.io/sample-nodejs:latest
+          IMAGE_NAME=${{ secrets.ACR_NAME }}.azurecr.io/myapp
+          docker push $IMAGE_NAME:${{ github.sha }}
+          docker push $IMAGE_NAME:latest
 
-  deploy:
-    runs-on: ubuntu-latest
-    needs: dockerize-and-push
-    steps:
-      # Checkout the repository
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Logout from Docker
+        run: docker logout
 
-      # Set up Azure CLI
-      - name: Install Azure CLI
-        run: |
-          curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+  # deploy:
+  #   runs-on: ubuntu-latest
+  #   needs: dockerize-and-push
+  #   steps:
+  #     # Checkout the repository
+  #     - name: Checkout repository
+  #       uses: actions/checkout@v3
 
-      # Log in to Azure using service principal credentials
-      - name: Log in to Azure
-        uses: azure/login@v1
-        with:
-          creds: ${{ secrets.AZURE_CREDENTIALS }}
+  #     # Set up Azure CLI
+  #     - name: Install Azure CLI
+  #       run: |
+  #         curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
 
-      # Get AKS credentials
-      - name: Get AKS credentials
-        run: |
-          az aks get-credentials --resource-group RGroup --name RGroup-aks
+  #     # Log in to Azure using service principal credentials
+  #     - name: Log in to Azure
+  #       uses: azure/login@v1
+  #       with:
+  #         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Install Helm
-      - name: Install Helm
-        run: |
-          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  #     # Get AKS credentials
+  #     - name: Get AKS credentials
+  #       run: |
+  #         az aks get-credentials --resource-group RGroup --name RGroup-aks
 
-      # Deploy the Node.js application using Helm
-      - name: Deploy Node.js app to AKS
-        run: |
-          helm upgrade --install sample-nodejs ./helm-charts \
-            --set image.repository=${{ secrets.ACR_NAME }}.azurecr.io/sample-nodejs \
-            --set image.tag=latest
+  #     # Install Helm
+  #     - name: Install Helm
+  #       run: |
+  #         curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+  #     # Deploy the Node.js application using Helm
+  #     - name: Deploy Node.js app to AKS
+  #       run: |
+  #         helm upgrade --install sample-nodejs ./helm-charts \
+  #           --set image.repository=${{ secrets.ACR_NAME }}.azurecr.io/sample-nodejs \
+  #           --set image.tag=latest
